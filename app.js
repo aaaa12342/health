@@ -332,8 +332,11 @@ document.addEventListener('submit', event => {
       } catch { throw new Error('恢复失败：存储空间不足或不可用。原记录未被替换，请先导出备份。'); }
     }
     if (ok) {
+      // Remove the modal/backdrop before replacing the journal it overlays.
+      // The meal list, intake totals and standard comparisons then repaint together.
+      modal.close();
       render();
-      if (ctx.returnPicker) openPicker(ctx.returnPicker.type, ctx.returnPicker.meal); else modal.close();
+      if (ctx.returnPicker) openPicker(ctx.returnPicker.type, ctx.returnPicker.meal);
     }
   } catch (error) { form.querySelector('#form-error').textContent = error.message; }
 });
