@@ -74,3 +74,17 @@ test('空日不标记记录，备注、体重、动作、围度均会标记', ()
     const day = emptyDay(); edit(day); assert.equal(Boolean(hasRecord(day)), true);
   }
 });
+
+
+test('分钟动作在动作库和每日训练备份中往返保留，旧单位兼容', () => {
+  for (const unit of ['个', '秒', '分钟']) {
+    const state = emptyState();
+    const action = { ...exercise(), unit, reps: 10 };
+    state.exercises.push(action);
+    state.days['2026-10-20'] = emptyDay();
+    state.days['2026-10-20'].workouts.push(workoutEntry(action));
+    const result = validateBackup(JSON.parse(JSON.stringify(state)));
+    assert.equal(result.exercises[0].unit, unit);
+    assert.equal(result.days['2026-10-20'].workouts[0].exercise.unit, unit);
+  }
+});

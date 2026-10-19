@@ -1,6 +1,7 @@
 export const STORAGE_KEY = 'daily-health:v1';
 export const RECOVERY_KEY = 'daily-health:before-import';
 export const NUTRIENTS = { energy: ['能量', 'kJ'], protein: ['蛋白质', 'g'], fat: ['脂肪', 'g'], carbs: ['碳水化合物', 'g'], fiber: ['膳食纤维', 'g'], sodium: ['钠', 'mg'] };
+export const EXERCISE_UNITS = ['个', '秒', '分钟'];
 export const MEALS = { breakfast: '早餐', lunch: '午餐', dinner: '晚餐', snack: '加餐' };
 export const BODY = { weight: ['体重', 'kg'], waist: ['腰围', 'cm'], hip: ['臀围', 'cm'], chest: ['胸围', 'cm'], thigh: ['大腿围', 'cm'], arm: ['上臂围', 'cm'] };
 export const emptyState = () => ({ version: 1, foods: [], exercises: [], days: {}, targets: {} });
@@ -72,7 +73,7 @@ export function validateBackup(input) {
   };
   const exercise = v => {
     if (!obj(v)) fail('动作');
-    if (!['个', '秒'].includes(v.unit)) fail('动作单位');
+    if (!EXERCISE_UNITS.includes(v.unit)) fail('动作单位');
     return { id: id(v.id), name: string(v.name, 100, '动作名称', true), sets: number(v.sets, '组数', true, false, true), reps: number(v.reps, '每组数量', true), unit: v.unit };
   };
   if (!obj(input) || input.version !== 1 || !obj(input.days)) fail('版本或日期记录');
