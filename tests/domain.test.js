@@ -1,9 +1,26 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { emptyState, emptyDay, foodEntry, workoutEntry, scaleNutrients, totals, validDate, dateKey, shiftDate, series, validateBackup, hasRecord } from '../domain.js';
+import { emptyState, emptyDay, foodEntry, workoutEntry, scaleNutrients, totals, nutrientComparison, validDate, dateKey, shiftDate, series, validateBackup, hasRecord } from '../domain.js';
 
 const food = () => ({ id: 'food-1', name: '测试燕麦', baseQuantity: 100, unit: '克', nutrients: { energy: 1600, protein: 12, fat: 8, carbs: 60, fiber: null, sodium: 0 } });
 const exercise = () => ({ id: 'exercise-1', name: '深蹲', sets: 3, reps: 12, unit: '个' });
+test('营养标准比较处理未设置、低于、超过及零标准', () => {
+  assert.equal(nutrientComparison(100, null), null);
+  assert.deepEqual(nutrientComparison(1600, 8000), { difference: -6400, percentage: 20 });
+  assert.deepEqual(nutrientComparison(120, 100), { difference: 20, percentage: 120 });
+  assert.deepEqual(nutrientComparison(100, 100), { difference: 0, percentage: 100 });
+  assert.deepEqual(nutrientComparison(10, 0), { difference: 10, percentage: null });
+  assert.deepEqual(nutrientComparison(0, 0), { difference: 0, percentage: null });
+});
+test('标准随备份往返；旧备份无标准时仍兼容；负数和非数值被拒绝', () => {
+  const state = emptyState(); state.targets = { energy: 8000, protein: 100, sodium: 0 };
+  const restored = validateBackup(JSON.parse(JSON.stringify(state)));
+  assert.equal(restored.targets.energy, 8000); assert.equal(restored.targets.sodium, 0); assert.equal(restored.targets.fat, null);
+  delete state.targets; assert.equal(validateBackup(state).targets.protein, null);
+  state.targets = { energy: -1 }; assert.throws(() => validateBackup(state));
+  state.targets = { energy: '8000' }; assert.throws(() => validateBackup(state));
+  state.targets = []; assert.throws(() => validateBackup(state));
+});
 test('按基准份量折算营养，保留未知和明确零', () => {
   assert.deepEqual(scaleNutrients(food(), 150), { energy: 2400, protein: 18, fat: 12, carbs: 90, fiber: null, sodium: 0 });
 });

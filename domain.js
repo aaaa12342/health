@@ -3,7 +3,7 @@ export const RECOVERY_KEY = 'daily-health:before-import';
 export const NUTRIENTS = { energy: ['能量', 'kJ'], protein: ['蛋白质', 'g'], fat: ['脂肪', 'g'], carbs: ['碳水化合物', 'g'], fiber: ['膳食纤维', 'g'], sodium: ['钠', 'mg'] };
 export const MEALS = { breakfast: '早餐', lunch: '午餐', dinner: '晚餐', snack: '加餐' };
 export const BODY = { weight: ['体重', 'kg'], waist: ['腰围', 'cm'], hip: ['臀围', 'cm'], chest: ['胸围', 'cm'], thigh: ['大腿围', 'cm'], arm: ['上臂围', 'cm'] };
-export const emptyState = () => ({ version: 1, foods: [], exercises: [], days: {} });
+export const emptyState = () => ({ version: 1, foods: [], exercises: [], days: {}, targets: {} });
 export const emptyDay = () => ({ meals: { breakfast: [], lunch: [], dinner: [], snack: [] }, mealNotes: { breakfast: '', lunch: '', dinner: '', snack: '' }, dietNote: '', workouts: [], workoutNote: '', body: {} });
 export const uid = () => globalThis.crypto.randomUUID();
 export function dateKey(date = new Date()) {
@@ -33,6 +33,10 @@ export function totals(day) {
     }
     return [k, { value, missing, count: items.length }];
   }));
+}
+export function nutrientComparison(actual, target) {
+  if (target == null) return null;
+  return { difference: actual - target, percentage: target > 0 ? actual / target * 100 : null };
 }
 export function foodEntry(food, quantity = food.baseQuantity) { return { id: uid(), food: structuredClone(food), quantity }; }
 export function workoutEntry(exercise) { return { id: uid(), exercise: structuredClone(exercise), duration: null, feeling: '' }; }
@@ -73,6 +77,9 @@ export function validateBackup(input) {
   };
   if (!obj(input) || input.version !== 1 || !obj(input.days)) fail('版本或日期记录');
   const state = emptyState();
+  // Older version-1 backups did not contain standards. Keep those usable.
+  if (input.targets != null && !obj(input.targets)) fail('每日营养标准');
+  for (const key of Object.keys(NUTRIENTS)) state.targets[key] = number(input.targets?.[key], '每日' + NUTRIENTS[key][0] + '标准', false, true);
   state.foods = unique(array(input.foods, 5000, '食物库').map(food), '食物库');
   state.exercises = unique(array(input.exercises, 5000, '动作库').map(exercise), '动作库');
   if (Object.keys(input.days).length > 30000) fail('日期数量过多');

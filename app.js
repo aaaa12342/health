@@ -1,4 +1,4 @@
-import { STORAGE_KEY, RECOVERY_KEY, NUTRIENTS, MEALS, BODY, emptyState, emptyDay, uid, dateKey, validDate, shiftDate, dayOf, scaleNutrients, totals, foodEntry, workoutEntry, series, hasRecord, validateBackup } from './domain.js';
+import { STORAGE_KEY, RECOVERY_KEY, NUTRIENTS, MEALS, BODY, emptyState, emptyDay, uid, dateKey, validDate, shiftDate, dayOf, scaleNutrients, totals, nutrientComparison, foodEntry, workoutEntry, series, hasRecord, validateBackup } from './domain.js';
 
 const icons = {
   food: '<path d="M4 3v6a3 3 0 0 0 6 0V3M7 3v18M16 3v8h4M20 3v18"/>',
@@ -67,9 +67,18 @@ function dateControls() {
 function heading(title, subtitle) {
   return `<div class="page-heading"><div><h1>${title}</h1><p>${subtitle}</p></div>${dateControls()}</div>`;
 }
+function targetComparison(day) {
+  const t = totals(day), configured = Object.keys(NUTRIENTS).some(k => state.targets[k] != null);
+  return `<div class="target-comparison"><div class="target-heading"><strong>每日营养标准</strong><button type="button" data-action="targets">${icon('edit')}${configured ? '修改标准' : '设置标准'}</button></div>${configured ? `<div class="target-grid">${Object.entries(NUTRIENTS).map(([key, [label, unit]]) => {
+    const target = state.targets[key], comparison = nutrientComparison(t[key].value, target);
+    if (!comparison) return `<div class="target-item"><div class="target-label">${label}</div><p class="target-unset">未设置标准</p></div>`;
+    const { difference, percentage } = comparison;
+    return `<div class="target-item${difference > 0 ? ' above' : ''}" data-target="${key}"><div class="target-label"><span>${label}${t[key].missing ? '（已知）' : ''}</span><span>${percentage == null ? '标准为 0' : `${fmt(percentage, 0)}%`}</span></div><div class="target-values">${fmt(t[key].value)} / ${fmt(target)} ${unit}</div><div class="target-track" aria-hidden="true"><span style="width:${percentage == null ? (difference > 0 ? 100 : 0) : Math.min(100, Math.max(0, percentage))}%"></span></div><div class="target-difference">${difference === 0 ? '与标准相同' : `${difference > 0 ? '高于' : '低于'}标准 ${fmt(Math.abs(difference))} ${unit}`}</div></div>`;
+  }).join('')}</div><p class="target-caption">按已记录摄入对比；标准由你自行设定，适用于所有日期。${Object.values(t).some(n => n.missing) ? '存在未填写的营养值，比较结果可能不完整。' : ''}</p>` : '<p class="target-caption">自行填写每天的能量和营养标准，即可查看摄入比例及差额。未设置的项目不作比较。</p>'}</div>`;
+}
 function nutritionPanel(day) {
   const t = totals(day), count = t.energy.count;
-  return `<section class="panel nutrition-panel"><div class="section-head"><h2>今日营养摄入</h2><span class="meta">${count} 条饮食记录</span></div><div class="nutrition-content"><div><div class="energy-number">${fmt(t.energy.value, 0)}<small>kJ</small></div><p class="energy-caption">摄入能量 · 约 ${fmt(t.energy.value / 4.184, 0)} kcal</p></div><div class="macro-grid">${['protein', 'fat', 'carbs'].map(k => `<div class="macro-item"><div class="macro-label"><span class="dot ${k}"></span>${NUTRIENTS[k][0]}</div><div class="macro-value">${fmt(t[k].value)}<small>g</small></div></div>`).join('')}</div></div><div class="nutrition-foot"><span>膳食纤维 ${fmt(t.fiber.value)} g　 ·　 钠 ${fmt(t.sodium.value, 0)} mg</span><span>按实际食用份量计算</span></div>${Object.values(t).some(n => n.missing) ? '<div class="warning">部分食物未填写完整营养；以上仅合计已填写的数值。</div>' : ''}</section>`;
+  return `<section class="panel nutrition-panel"><div class="section-head"><h2>今日营养摄入</h2><span class="meta">${count} 条饮食记录</span></div><div class="nutrition-content"><div><div class="energy-number">${fmt(t.energy.value, 0)}<small>kJ</small></div><p class="energy-caption">摄入能量 · 约 ${fmt(t.energy.value / 4.184, 0)} kcal</p></div><div class="macro-grid">${['protein', 'fat', 'carbs'].map(k => `<div class="macro-item"><div class="macro-label"><span class="dot ${k}"></span>${NUTRIENTS[k][0]}</div><div class="macro-value">${fmt(t[k].value)}<small>g</small></div></div>`).join('')}</div></div><div class="nutrition-foot"><span>膳食纤维 ${fmt(t.fiber.value)} g　 ·　 钠 ${fmt(t.sodium.value, 0)} mg</span><span>按实际食用份量计算</span></div>${Object.values(t).some(n => n.missing) ? '<div class="warning">部分食物未填写完整营养；以上仅合计已填写的数值。</div>' : ''}${targetComparison(day)}</section>`;
 }
 function bodyPanel(day) {
   return `<section class="panel body-panel"><div class="section-head"><h2>${icon('scale')}身体记录</h2><button data-action="body" aria-label="编辑身体记录">${icon('edit')}记录</button></div><div class="body-weight">${fmt(day.body.weight)}<small>kg</small></div>${day.body.weight == null ? '<p class="body-empty">留下今天的体重，慢慢积累变化。</p>' : '<p class="body-empty">所选日期的体重</p>'}<div class="body-data">${Object.entries(BODY).filter(([k]) => k !== 'weight').map(([k, [label, unit]]) => `<div><span>${label}</span><strong>${fmt(day.body[k])}<small>${unit}</small></strong></div>`).join('')}</div></section>`;
@@ -99,7 +108,7 @@ function overview(day) {
 }
 function nutrientStrip(day) {
   const t = totals(day);
-  return `<div class="day-summary-strip"><span class="strip-title">今日摄入</span><div class="strip-nutrients">${['energy', 'protein', 'fat', 'carbs'].map(k => `<div><span class="strip-label">${NUTRIENTS[k][0]}${t[k].missing ? '（已知）' : ''}</span><b>${fmt(t[k].value, k === 'energy' ? 0 : 1)}<small>${NUTRIENTS[k][1]}</small></b></div>`).join('')}</div></div>`;
+  return `<section class="day-nutrition"><div class="day-summary-strip"><span class="strip-title">今日摄入</span><div class="strip-nutrients">${['energy', 'protein', 'fat', 'carbs'].map(k => `<div><span class="strip-label">${NUTRIENTS[k][0]}${t[k].missing ? '（已知）' : ''}</span><b>${fmt(t[k].value, k === 'energy' ? 0 : 1)}<small>${NUTRIENTS[k][1]}</small></b></div>`).join('')}</div></div>${targetComparison(day)}</section>`;
 }
 function library(type) {
   const food = type === 'food', items = food ? state.foods : state.exercises;
@@ -158,6 +167,10 @@ function openBody() {
   const body = dayOf(state, selectedDate).body;
   openModal('记录身体数据', `${selectedDate} · 按相近时间和相同方式测量，更便于观察变化。留空可清除该项。`, `<div class="form-grid">${Object.entries(BODY).map(([k, [label, unit]]) => field(`${label} / ${unit}`, k, body[k] ?? '', `type="number" min="0.01" max="${k === 'weight' ? 1000 : 10000}" step="0.01" placeholder="未记录"`)).join('')}</div>`);
 }
+function openTargets() {
+  modalContext = { type: 'targets' };
+  openModal('每日营养摄入标准', '填写你自己的每日标准，适用于所有日期。留空则不比较该项，填写 0 表示标准为零。', `<div class="form-grid">${Object.entries(NUTRIENTS).map(([key, [label, unit]]) => field(`${label}标准 / ${unit}`, key, state.targets[key] ?? '', 'type="number" min="0" max="1000000000" step="any" placeholder="未设置"')).join('')}</div><p class="small muted" style="line-height:1.9;margin-bottom:0">能量使用 kJ。若你的标准以 kcal 表示，请乘以 4.184 后填写。标准会随备份一同导出。</p>`);
+}
 function downloadData(data, name) {
   const blob = new Blob([typeof data === 'string' ? data : JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob), a = document.createElement('a'); a.href = url; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -196,6 +209,7 @@ document.addEventListener('click', event => {
     const key = dateKey(d); if (validDate(key)) { month = key.slice(0, 7); render(); }
   }
   else if (action === 'body') openBody();
+  else if (action === 'targets') openTargets();
   else if (action === 'new-food') foodForm('library');
   else if (action === 'edit-food') foodForm('library', state.foods.find(f => f.id === id));
   else if (action === 'oneoff-food') foodForm('oneoff', null, meal);
@@ -300,6 +314,7 @@ document.addEventListener('submit', event => {
       }, `已添加 ${ids.length} 项${ctx.kind === 'food' ? '食物' : '动作'}`);
     }
     else if (ctx.type === 'body') ok = changeDay(day => { for (const key of Object.keys(BODY)) day.body[key] = num(key); }, '身体数据已保存');
+    else if (ctx.type === 'targets') ok = commit(next => { next.targets = Object.fromEntries(Object.keys(NUTRIENTS).map(key => [key, num(key)])); }, '每日营养标准已保存');
     else if (ctx.type === 'delete') ok = commit(next => {
       if (ctx.kind === 'food') next.foods = next.foods.filter(f => f.id !== ctx.id);
       else if (ctx.kind === 'exercise') next.exercises = next.exercises.filter(e => e.id !== ctx.id);
