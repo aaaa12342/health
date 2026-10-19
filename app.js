@@ -81,7 +81,7 @@ function nutritionPanel(day) {
   return `<section class="panel nutrition-panel"><div class="section-head"><h2>今日营养摄入</h2><span class="meta">${count} 条饮食记录</span></div><div class="nutrition-content"><div><div class="energy-number">${fmt(t.energy.value, 0)}<small>kJ</small></div><p class="energy-caption">摄入能量 · 约 ${fmt(t.energy.value / 4.184, 0)} kcal</p></div><div class="macro-grid">${['protein', 'fat', 'carbs'].map(k => `<div class="macro-item"><div class="macro-label"><span class="dot ${k}"></span>${NUTRIENTS[k][0]}</div><div class="macro-value">${fmt(t[k].value)}<small>g</small></div></div>`).join('')}</div></div><div class="nutrition-foot"><span>膳食纤维 ${fmt(t.fiber.value)} g　 ·　 钠 ${fmt(t.sodium.value, 0)} mg</span><span>按实际食用份量计算</span></div>${Object.values(t).some(n => n.missing) ? '<div class="warning">部分食物未填写完整营养；以上仅合计已填写的数值。</div>' : ''}${targetComparison(day)}</section>`;
 }
 function bodyPanel(day) {
-  return `<section class="panel body-panel"><div class="section-head"><h2>${icon('scale')}身体记录</h2><button data-action="body" aria-label="编辑身体记录">${icon('edit')}记录</button></div><div class="body-weight">${fmt(day.body.weight)}<small>kg</small></div>${day.body.weight == null ? '<p class="body-empty">留下今天的体重，慢慢积累变化。</p>' : '<p class="body-empty">所选日期的体重</p>'}<div class="body-data">${Object.entries(BODY).filter(([k]) => k !== 'weight').map(([k, [label, unit]]) => `<div><span>${label}</span><strong>${fmt(day.body[k])}<small>${unit}</small></strong></div>`).join('')}</div></section>`;
+  return `<section class="panel body-panel"><div class="section-head"><h2>${icon('scale')}身体记录</h2></div><div class="body-section-heading"><span>体重</span><button data-action="weight" aria-label="记录体重">${icon('edit')}记录体重</button></div><div class="body-weight">${fmt(day.body.weight)}<small>kg</small></div>${day.body.weight == null ? '<p class="body-empty">留下今天的体重，慢慢积累变化。</p>' : '<p class="body-empty">所选日期的体重</p>'}<div class="body-section-heading circumference-heading"><span>身体围度</span><button data-action="circumference" aria-label="记录围度">${icon('edit')}记录围度</button></div><div class="body-data">${Object.entries(BODY).filter(([k]) => k !== 'weight').map(([k, [label, unit]]) => `<div><span>${label}</span><strong>${fmt(day.body[k])}<small>${unit}</small></strong></div>`).join('')}</div></section>`;
 }
 function calendar() {
   const first = new Date(`${month}-01T12:00:00`), count = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
@@ -93,7 +93,7 @@ function calendar() {
 }
 function chart(field) {
   const points = series(state, selectedDate, range, field), actual = points.filter(p => p.value != null), [label, unit] = BODY[field];
-  if (!actual.length) return `${empty('还没有这段时间的记录', `记录${label}后，这里会显示近 ${range} 天的变化。`, 'body', '记录身体数据', 'chart')}`;
+  if (!actual.length) return `${empty('还没有这段时间的记录', `记录${label}后，这里会显示近 ${range} 天的变化。`, field === 'weight' ? 'weight' : 'circumference', field === 'weight' ? '记录体重' : '记录围度', 'chart')}`;
   const minValue = Math.min(...actual.map(p => p.value)), maxValue = Math.max(...actual.map(p => p.value));
   const margin = Math.max((maxValue - minValue) * .2, field === 'weight' ? .5 : 1), low = Math.max(0, minValue - margin), high = maxValue + margin;
   const x = i => 42 + i * 518 / (range - 1), y = v => 136 - (v - low) / (high - low) * 112;
@@ -162,10 +162,11 @@ function openPicker(type, meal) {
   const food = type === 'food', items = food ? state.foods : state.exercises;
   openModal(food ? `选择${MEALS[meal]}食物` : '选择今天的训练动作', food ? '支持多选，并填写每一项实际吃下的数量。单位与食物库一致。' : '支持多选。添加后点击动作旁的编辑按钮，补充时长、感受或调整组数。', `${items.length ? `<input type="search" id="picker-search" aria-label="搜索${food ? '食物' : '动作'}" placeholder="搜索${food ? '食物' : '动作'}名称"><div class="picker-list">${items.map(i => `<div class="picker-item" data-name="${esc(i.name.toLocaleLowerCase())}"><label><input type="checkbox" name="selected" value="${esc(i.id)}"><span class="picker-name"><strong>${esc(i.name)}</strong><small>${food ? `基准 ${fmt(i.baseQuantity)} ${esc(i.unit)}${i.nutrients.energy == null ? '' : ` · ${fmt(i.nutrients.energy, 0)} kJ`}` : `${i.sets} 组 × ${fmt(i.reps)} ${i.unit}`}</small></span></label>${food ? `<input class="picker-qty" type="number" min="0.001" max="1000000000" step="any" data-qty="${esc(i.id)}" value="${i.baseQuantity}" aria-label="${esc(i.name)}实际食用数量"><span class="picker-unit">${esc(i.unit)}</span>` : ''}</div>`).join('')}</div><p class="small muted" id="picker-count">已选 0 项</p>` : empty(`先添加一个${food ? '食物' : '动作'}`, `你的${food ? '食物' : '动作'}库还是空的，添加后就能在这里多选。`, '', '', type === 'food' ? 'food' : 'exercise')}`, `<button type="button" data-action="picker-new">${icon('plus')}新建${food ? '食物' : '动作'}</button><button type="button" data-action="close">取消</button><button class="primary" type="submit" ${items.length ? '' : 'disabled'}>添加所选</button>`);
 }
-function openBody() {
-  modalContext = { type: 'body' };
+function openBody(kind) {
+  const fields = Object.keys(BODY).filter(key => kind === 'weight' ? key === 'weight' : key !== 'weight');
+  modalContext = { type: 'body', fields };
   const body = dayOf(state, selectedDate).body;
-  openModal('记录身体数据', `${selectedDate} · 按相近时间和相同方式测量，更便于观察变化。留空可清除该项。`, `<div class="form-grid">${Object.entries(BODY).map(([k, [label, unit]]) => field(`${label} / ${unit}`, k, body[k] ?? '', `type="number" min="0.01" max="${k === 'weight' ? 1000 : 10000}" step="0.01" placeholder="未记录"`)).join('')}</div>`);
+  openModal(kind === 'weight' ? '记录体重' : '记录身体围度', `${selectedDate} · 按相近时间和相同方式测量，更便于观察变化。留空可清除该项。`, `<div class="form-grid">${fields.map(k => { const [label, unit] = BODY[k]; return field(`${label} / ${unit}`, k, body[k] ?? '', `type="number" min="0.01" max="${k === 'weight' ? 1000 : 10000}" step="0.01" placeholder="未记录"`); }).join('')}</div>`);
 }
 function openTargets() {
   modalContext = { type: 'targets' };
@@ -208,7 +209,7 @@ document.addEventListener('click', event => {
     const d = new Date(`${month}-01T12:00:00`); d.setMonth(d.getMonth() + (action === 'prev-month' ? -1 : 1));
     const key = dateKey(d); if (validDate(key)) { month = key.slice(0, 7); render(); }
   }
-  else if (action === 'body') openBody();
+  else if (action === 'weight' || action === 'circumference') openBody(action);
   else if (action === 'targets') openTargets();
   else if (action === 'new-food') foodForm('library');
   else if (action === 'edit-food') foodForm('library', state.foods.find(f => f.id === id));
@@ -313,7 +314,7 @@ document.addEventListener('submit', event => {
         else for (const id of ids) day.workouts.push(workoutEntry(state.exercises.find(e => e.id === id)));
       }, `已添加 ${ids.length} 项${ctx.kind === 'food' ? '食物' : '动作'}`);
     }
-    else if (ctx.type === 'body') ok = changeDay(day => { for (const key of Object.keys(BODY)) day.body[key] = num(key); }, '身体数据已保存');
+    else if (ctx.type === 'body') ok = changeDay(day => { for (const key of ctx.fields) day.body[key] = num(key); }, ctx.fields.includes('weight') ? '体重已保存' : '围度已保存');
     else if (ctx.type === 'targets') ok = commit(next => { next.targets = Object.fromEntries(Object.keys(NUTRIENTS).map(key => [key, num(key)])); }, '每日营养标准已保存');
     else if (ctx.type === 'delete') ok = commit(next => {
       if (ctx.kind === 'food') next.foods = next.foods.filter(f => f.id !== ctx.id);
