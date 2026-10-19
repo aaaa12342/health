@@ -1,0 +1,8 @@
+node_modules/
+.qa/
+test-results/
+playwright-report/
+task_plan.md
+findings.md
+progress.md
+*.log

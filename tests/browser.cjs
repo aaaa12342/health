@@ -1,0 +1,128 @@
+// Run with Playwright available in NODE_PATH, a local server on port 4173,
+// and Chrome or Edge installed. All records are created in an isolated context.
+const { chromium } = require('playwright');
+const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const path = require('node:path');
+
+(async () => {
+  const browser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL || 'msedge', headless: true });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1050 }, acceptDownloads: true });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  const dialog = page.locator('dialog');
+  const fill = async (name, value) => dialog.getByLabel(name, { exact: true }).fill(String(value));
+  const submit = async (name = '保存') => { await dialog.getByRole('button', { name, exact: true }).click(); await page.waitForTimeout(80); };
+  const saved = () => page.evaluate(() => JSON.parse(localStorage.getItem('daily-health:v1')));
+  const date = '2026-10-19';
+  await fs.mkdir('.qa', { recursive: true });
+  await page.goto('http://127.0.0.1:4173/');
+  await page.locator('#record-date').fill(date);
+  await page.locator('#record-date').press('Tab');
+  await page.screenshot({ path: '.qa/overview-empty.png', fullPage: true });
+  await page.locator('[data-nav="diet"]').click();
+  async function addFood(name, energy, protein, fat, carbs, unit = '克', quantity = 100) {
+    await page.locator('[data-action="new-food"]').click();
+    await fill('食物名称', name); await fill('基准数量', quantity); await fill('数量单位', unit);
+    for (const [label, value] of [['能量 / kJ', energy], ['蛋白质 / g', protein], ['脂肪 / g', fat], ['碳水化合物 / g', carbs]]) await fill(label, value);
+    await submit();
+  }
+  await addFood('燕麦', 1600, 12, 8, 60);
+  await addFood('牛奶', 280, 3, 4, 5, '毫升');
+  await page.locator('[data-action="pick-food"][data-meal="breakfast"]').click();
+  await dialog.locator('.picker-item').filter({ hasText: '燕麦' }).locator('[type="checkbox"]').check();
+  await dialog.locator('.picker-item').filter({ hasText: '燕麦' }).locator('[data-qty]').fill('150');
+  await dialog.locator('.picker-item').filter({ hasText: '牛奶' }).locator('[type="checkbox"]').check();
+  await dialog.locator('.picker-item').filter({ hasText: '牛奶' }).locator('[data-qty]').fill('200');
+  await submit('添加所选');
+  assert.equal((await saved()).days[date].meals.breakfast.length, 2);
+  await page.locator('#note-breakfast').fill('早餐后饱腹感很好'); await page.locator('#note-breakfast').press('Tab');
+  await page.locator('[data-note="dietNote"]').fill('正常饮水'); await page.locator('[data-note="dietNote"]').press('Tab');
+  await page.locator('.library-item').filter({ hasText: '燕麦' }).locator('[data-action="edit-food"]').click();
+  await fill('能量 / kJ', 1); await submit();
+  assert.equal((await saved()).days[date].meals.breakfast[0].food.nutrients.energy, 1600);
+  await page.locator('[data-action="oneoff-food"][data-meal="lunch"]').click();
+  await fill('食物名称', '临时午餐'); await fill('实际食用数量（同单位）', 150); await submit();
+  assert.equal((await saved()).foods.length, 2);
+  await page.locator('[data-action="edit-food-entry"][data-meal="breakfast"]').first().click();
+  await fill('实际食用数量（同单位）', 100); await submit();
+  assert.equal((await saved()).days[date].meals.breakfast[0].quantity, 100);
+  await page.screenshot({ path: '.qa/diet-desktop.png', fullPage: true });
+  await page.locator('[data-nav="exercise"]').click();
+  await page.locator('[data-action="new-exercise"]').click();
+  await fill('动作名称', '深蹲'); await fill('组数', 4); await fill('每组数量', 15); await submit();
+  await page.locator('[data-action="new-exercise"]').click();
+  await fill('动作名称', '平板支撑'); await fill('每组数量', 45); await dialog.getByLabel('每组单位').selectOption('秒'); await submit();
+  await page.locator('[data-action="pick-exercise"]').first().click();
+  for (const check of await dialog.locator('[name="selected"]').all()) await check.check();
+  await submit('添加所选');
+  await page.locator('[data-action="edit-workout"]').first().click();
+  await fill('本动作训练时长 / 分钟（可选）', 20); await fill('这次训练的感受', '最后一组吃力，状态不错'); await submit();
+  await page.locator('[data-note="workoutNote"]').fill('今天睡眠充足'); await page.locator('[data-note="workoutNote"]').press('Tab');
+  await page.locator('#weight-form input').fill('65.2'); await page.locator('#weight-form button').click();
+  await page.screenshot({ path: '.qa/exercise-desktop.png', fullPage: true });
+  await page.locator('[data-nav="overview"]').click();
+  assert.match(await page.locator('.energy-number').textContent(), /2,160/);
+  assert.match(await page.locator('.body-weight').textContent(), /65.2/);
+  await page.locator('[data-action="body"]').first().click(); await fill('腰围 / cm', 75); await fill('臀围 / cm', 94); await submit();
+  await page.locator('[data-action="prev-day"]').click();
+  await page.locator('[data-action="body"]').first().click(); await fill('体重 / kg', 65.5); await fill('腰围 / cm', 75.5); await submit();
+  await page.locator('[data-action="next-day"]').click();
+  await page.locator('[data-action="range"][data-value="30"]').click();
+  assert.equal(await page.locator('.chart-point').count(), 4);
+  await page.locator('.calendar-day[data-date="2026-10-18"]').click();
+  assert.match(await page.locator('.body-weight').textContent(), /65.5/);
+  await page.locator('.calendar-day[data-date="2026-10-19"]').click();
+  await page.reload();
+  assert.match(await page.locator('.energy-number').textContent(), /2,160/);
+  assert.match(await page.locator('main').textContent(), /早餐后饱腹感很好/);
+  assert.match(await page.locator('main').textContent(), /最后一组吃力/);
+  await page.screenshot({ path: '.qa/overview-desktop.png', fullPage: true });
+  const original = await saved();
+  await page.locator('[data-action="backup"]').first().click();
+  const downloadEvent = page.waitForEvent('download'); await dialog.locator('[data-action="export"]').click();
+  const download = await downloadEvent; await download.saveAs('.qa/backup.json');
+  const exported = JSON.parse(await fs.readFile('.qa/backup.json', 'utf8'));
+  assert.deepEqual(exported.days, original.days);
+  await dialog.locator('#import-file').setInputFiles({ name: 'bad.json', mimeType: 'application/json', buffer: Buffer.from('{"version":2}') });
+  await dialog.locator('#form-error').waitFor({ state: 'visible' });
+  assert.match(await dialog.locator('#form-error').textContent(), /备份格式不正确/);
+  assert.deepEqual(await saved(), original);
+  const empty = { version: 1, foods: [], exercises: [], days: {} };
+  await dialog.locator('#import-file').setInputFiles({ name: 'empty.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(empty)) });
+  await dialog.getByRole('button', { name: '确认替换并恢复', exact: true }).waitFor();
+  await submit('确认替换并恢复'); assert.equal((await saved()).foods.length, 0);
+  await page.locator('[data-action="backup"]').first().click(); await dialog.locator('[data-action="recover"]').click(); await submit('确认替换并恢复');
+  assert.deepEqual((await saved()).days, exported.days);
+  // Delete a template and verify its saved historical record remains.
+  await page.locator('[data-nav="diet"]').click();
+  await page.locator('.library-item').filter({ hasText: '牛奶' }).locator('[data-action="delete-food"]').click(); await submit('确认删除');
+  assert.equal((await saved()).foods.length, 1); assert.equal((await saved()).days[date].meals.breakfast.length, 2);
+  await page.locator('[data-action="delete-food-entry"][data-meal="lunch"]').click(); await submit('确认删除');
+  assert.equal((await saved()).days[date].meals.lunch.length, 0);
+  // Render user text literally, including markup-like names.
+  await addFood('<img src=x onerror=alert(1)>', 0, 0, 0, 0);
+  assert.equal(await page.locator('.library-item img').count(), 0);
+  await page.locator('[data-nav="overview"]').click();
+  for (const width of [375, 390, 768, 1024, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const nav of ['diet', 'exercise', 'overview']) {
+      await page.locator(`[data-nav="${nav}"]`).click();
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth);
+      assert.equal(overflow, false, `${nav}: horizontal overflow at ${width}`);
+    }
+    if (width === 390) await page.screenshot({ path: '.qa/overview-mobile.png', fullPage: true });
+  }
+  // Block storage writes: saving must fail visibly and leave the prior state intact.
+  await page.locator('[data-action="body"]').first().click(); await fill('体重 / kg', 66);
+  const beforeFailure = await saved();
+  await page.evaluate(() => { window.originalSetItem = Storage.prototype.setItem; Storage.prototype.setItem = function () { throw new Error('quota'); }; });
+  await submit();
+  assert.deepEqual(await saved(), beforeFailure); assert.equal(await dialog.isVisible(), true);
+  assert.match(await page.locator('#save-status').textContent(), /保存失败/);
+  await page.evaluate(() => { Storage.prototype.setItem = window.originalSetItem; }); await dialog.locator('[data-action="close"]').first().click();
+  assert.deepEqual(errors, []);
+  console.log('PASS: food multi-select/scaling/history, one-off/edit/delete, notes, exercises, weight/circumferences, date/calendar/trends, reload, export/import/recovery, invalid backup, XSS escaping, storage failure, 5 responsive widths. No browser errors.');
+  await browser.close();
+})().catch(error => { console.error(error); process.exit(1); });
