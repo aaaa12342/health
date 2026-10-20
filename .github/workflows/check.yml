@@ -15,4 +15,5 @@ jobs:
           node-version: '22'
       - run: node --check app.js
       - run: node --check domain.js
-      - run: node --test tests/domain.test.js
+      - run: node --check cloud-store.js
+      - run: node --test tests/*.test.js

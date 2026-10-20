@@ -1,0 +1,45 @@
+// Optional isolated PostgreSQL verification; supply PGLITE_MODULE or install PGlite separately.
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+(async () => {
+  const { PGlite } = require(process.env.PGLITE_MODULE || '@electric-sql/pglite');
+  const db = new PGlite();
+  await db.exec("create role anon; create role authenticated; create schema auth; create table auth.users(id uuid primary key); create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$; grant usage on schema auth to anon,authenticated; grant execute on function auth.uid() to anon,authenticated;");
+  const a = '11111111-1111-4111-8111-111111111111', b = '22222222-2222-4222-8222-222222222222';
+  await db.query('insert into auth.users values ($1),($2)', [a, b]);
+  const sql = fs.readFileSync('supabase/health-sync.sql', 'utf8');
+  await db.exec(sql); await db.exec(sql);
+  const state = { version: 1, foods: [], exercises: [], days: {}, targets: {} };
+  let currentActor = '';
+  const actor = async (role, id = '') => {
+    await db.exec('reset role; set role ' + role); currentActor = id;
+    await db.query("select set_config('request.jwt.claim.sub', $1, false)", [id]);
+  };
+  const save = (payload, revision, owner = currentActor || a) => db.query('select * from public.save_health_journal($1::jsonb,$2::bigint,$3::uuid)', [JSON.stringify(payload), revision, owner]);
+  await actor('anon');
+  await assert.rejects(() => db.query('select * from public.health_journals'), /permission denied/);
+  await assert.rejects(() => save(state, 0), /permission denied/);
+  await actor('authenticated', a);
+  assert.equal(Number((await save(state, 0)).rows[0].revision), 1);
+  await assert.rejects(() => save(state, 0), /HEALTH_CONFLICT/);
+  state.targets.protein = 80;
+  assert.equal(Number((await save(state, 1)).rows[0].revision), 2);
+  await assert.rejects(() => save(state, 1), /HEALTH_CONFLICT/);
+  await actor('authenticated', b);
+  assert.equal((await db.query('select * from public.health_journals')).rows.length, 0);
+  assert.equal((await db.query('update public.health_journals set revision=99 where user_id=$1 returning user_id', [a])).rows.length, 0);
+  await assert.rejects(() => db.query('insert into public.health_journals(user_id,payload) values($1,$2::jsonb)', [a, JSON.stringify(state)]), /row-level security/);
+  await assert.rejects(() => save(state, 0, a), /HEALTH_ACCOUNT_CHANGED/);
+  await save(state, 0);
+  assert.equal((await db.query('select user_id from public.health_journals')).rows[0].user_id, b);
+  await assert.rejects(() => db.query('delete from public.health_journals'), /permission denied/);
+  await actor('authenticated', a);
+  const before = (await db.query('select revision from public.health_journals')).rows[0].revision;
+  await assert.rejects(() => save({}, 2), /health_payload_shape/);
+  assert.equal((await db.query('select revision from public.health_journals')).rows[0].revision, before);
+  assert.equal((await db.query('select payload from public.health_journals')).rows[0].payload.targets.protein, 80);
+  await actor('authenticated', '');
+  await assert.rejects(() => save(state, 0), /HEALTH_LOGIN_REQUIRED/);
+  await db.close();
+  console.log('PASS ISOLATED POSTGRES: repeatable migration, anon deny, own read/write, other-owner deny, account-context lock, CAS conflicts, invalid-payload rollback, missing identity deny.');
+})().catch(error => { console.error(error); process.exit(1); });

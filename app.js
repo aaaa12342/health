@@ -1,4 +1,5 @@
-import { STORAGE_KEY, RECOVERY_KEY, NUTRIENTS, EXERCISE_UNITS, MEALS, BODY, emptyState, emptyDay, uid, dateKey, validDate, shiftDate, dayOf, scaleNutrients, totals, nutrientComparison, foodEntry, workoutEntry, series, hasRecord, validateBackup } from './domain.js?v=20261020-1';
+import { STORAGE_KEY, RECOVERY_KEY, NUTRIENTS, EXERCISE_UNITS, MEALS, BODY, emptyState, emptyDay, uid, dateKey, validDate, shiftDate, dayOf, scaleNutrients, totals, nutrientComparison, foodEntry, workoutEntry, series, hasRecord, validateBackup } from './domain.js?v=20261020-cloud1';
+import { HealthStore, publicConfig, cloudError, mergeHealthData } from './cloud-store.js?v=20261020-cloud1';
 
 const icons = {
   food: '<path d="M4 3v6a3 3 0 0 0 6 0V3M7 3v18M16 3v8h4M20 3v18"/>',
@@ -28,10 +29,14 @@ let state = emptyState(), startupError = '', selectedDate = dateKey(), month = s
 let modalContext = null, pendingImport = null, toastTimer;
 const pages = { diet: '饮食', exercise: '锻炼', overview: '总览' };
 let page = 'overview';
+const store = new HealthStore({ storage: localStorage });
+let saving = false, authInitializing = true, connectionError = '', lastSaveError = '';
+const recoveryKey = () => store.user ? RECOVERY_KEY + ':' + store.user.id : RECOVERY_KEY;
 
 try {
   const saved = localStorage.getItem(STORAGE_KEY);
   if (saved) state = validateBackup(JSON.parse(saved));
+  store.state = state; store.ready = true;
 } catch {
   startupError = '本机记录读取失败。原始数据仍被保留，请先到「备份与恢复」导出原始数据，再恢复有效备份。';
 }
@@ -45,18 +50,30 @@ function status(message, error = false) {
   const el = document.querySelector('#save-status');
   el.classList.toggle('error', error); el.innerHTML = `<i></i>${esc(message)}`;
 }
-function commit(change, message = '已保存') {
+async function commit(change, message = '已保存') {
   if (startupError) { toast('请先导出原始数据并恢复有效备份，避免覆盖已有记录。'); return false; }
+  if (authInitializing || saving || store.loading) { toast('正在连接或保存，请稍后操作。'); return false; }
+  const generation = store.generation;
+  saving = true; status(store.user ? '正在保存到云端…' : '正在保存…');
   try {
-    const next = structuredClone(state); change(next);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    state = next; status('已在本机保存');
+    const next = structuredClone(state), replacement = change(next);
+    const result = await store.save(replacement ?? next);
+    if (generation !== store.generation) return false;
+    state = result; lastSaveError = '';
+    status(store.user ? '云端已同步' : '已在本机保存');
     if (message) toast(message);
     return true;
-  } catch { status('保存失败', true); toast('保存失败：浏览器存储可能已满或被禁用。请先导出备份。'); return false; }
+  } catch (error) {
+    if (generation !== store.generation) return false;
+    lastSaveError = store.user ? cloudError(error) : '保存失败：浏览器存储可能已满或被禁用。请先导出备份。';
+    status(store.user ? '云端保存未完成' : '保存失败', true); toast(lastSaveError);
+    if (modal.open) modal.querySelector('#form-error').textContent = lastSaveError;
+    return false;
+  } finally { saving = false; }
 }
-function changeDay(change, message) {
-  return commit(next => { next.days[selectedDate] ??= emptyDay(); change(next.days[selectedDate]); }, message);
+async function changeDay(change, message) {
+  const date = selectedDate;
+  return commit(next => { next.days[date] ??= emptyDay(); change(next.days[date]); }, message);
 }
 function empty(title, text, action = '', button = '', type = 'food') {
   return `<div class="empty"><span class="empty-icon">${icon(type)}</span><strong>${title}</strong><p>${text}</p>${action ? `<button data-action="${action}">${icon('plus')}${button}</button>` : ''}</div>`;
@@ -133,7 +150,9 @@ function render() {
   document.title = `${pages[page]} · 日常 Health`;
   const day = dayOf(state, selectedDate);
   main.innerHTML = `${startupError ? `<div class="form-error" role="alert">${esc(startupError)} <button data-action="backup">备份与恢复</button></div>` : ''}${page === 'diet' ? diet(day) : page === 'exercise' ? exercisePage(day) : overview(day)}`;
-  if (startupError) status('本机记录读取失败', true);
+  renderSyncStatus();
+  if (store.error || connectionError) main.insertAdjacentHTML('afterbegin', '<div class="form-error" role="alert">' + esc(store.error || connectionError) + ' <button data-action="account">同步设置</button></div>');
+  main.inert = authInitializing || store.loading;
 }
 function switchDate(date) {
   if (!validDate(date)) { toast('请选择 1900 至 2200 年间的有效日期。'); return; }
@@ -179,14 +198,14 @@ function downloadData(data, name) {
 function backupDialog() {
   modalContext = { type: 'backup' };
   const count = Object.values(state.days).filter(hasRecord).length;
-  let recovery = false; try { recovery = Boolean(localStorage.getItem(RECOVERY_KEY)); } catch { /* storage error displayed elsewhere */ }
-  openModal('备份与恢复', '记录只保存在当前浏览器，不会上传到 GitHub，也不会自动同步到其他设备。', `<div class="backup-options"><div class="backup-option"><h3>导出完整备份</h3><p>包含 ${count} 天记录、${state.foods.length} 项食物、${state.exercises.length} 个动作。清理浏览器、更换设备前请先导出。</p><button data-action="export" type="button">${icon('download')}导出 JSON 备份</button>${startupError ? '<button data-action="export-raw" type="button">导出未解析的原始数据</button>' : ''}</div><div class="backup-option"><h3>从文件恢复</h3><p>选择此前导出的 JSON 文件。校验通过后会显示摘要，确认才会替换本机记录。恢复前会保留一份本机副本。</p><input class="file-input" id="import-file" type="file" accept=".json,application/json" aria-label="选择备份 JSON 文件"></div>${recovery ? '<div class="backup-option"><h3>恢复导入前的记录</h3><p>本机保留了上次导入前的副本，可撤销最近一次导入。</p><button data-action="recover" type="button">查看恢复副本</button></div>' : ''}<p class="small muted" style="line-height:1.9;margin:0">无痕模式关闭、浏览器数据清理或更换网址，都可能让本机记录不可用。备份文件含个人数据，请自行妥善保存。</p></div>`, '<button type="button" data-action="close">完成</button>');
+  let recovery = false; try { recovery = Boolean(localStorage.getItem(recoveryKey())); } catch { /* storage error displayed elsewhere */ }
+  openModal('备份与恢复', store.user ? '当前为云端模式，备份属于当前登录账号；本地记录单独保留。' : '当前为本地模式；登录云端后可主动迁移。', `<div class="backup-options"><div class="backup-option"><h3>导出完整备份</h3><p>包含 ${count} 天记录、${state.foods.length} 项食物、${state.exercises.length} 个动作。清理浏览器、更换设备前请先导出。</p><button data-action="export" type="button">${icon('download')}导出 JSON 备份</button>${startupError ? '<button data-action="export-raw" type="button">导出未解析的原始数据</button>' : ''}</div><div class="backup-option"><h3>从文件恢复</h3><p>选择此前导出的 JSON 文件。校验通过后会显示摘要，确认才会替换当前${store.user ? '账号云端' : '本机'}记录；恢复前在本机保留按账号区分的副本。</p><input class="file-input" id="import-file" type="file" accept=".json,application/json" aria-label="选择备份 JSON 文件"></div>${recovery ? '<div class="backup-option"><h3>恢复导入前的记录</h3><p>本机保留了上次导入前的副本，可撤销最近一次导入。</p><button data-action="recover" type="button">查看恢复副本</button></div>' : ''}<p class="small muted" style="line-height:1.9;margin:0">无痕模式关闭、浏览器数据清理或更换网址，都可能让本机记录不可用。备份文件含个人数据，请自行妥善保存。</p></div>`, '<button type="button" data-action="close">完成</button>');
 }
 function previewImport(data, recovery = false) {
   pendingImport = data;
   modalContext = { type: 'import', recovery };
   const dates = Object.entries(data.days).filter(([, day]) => hasRecord(day)).map(([date]) => date).sort();
-  openModal(recovery ? '恢复导入前的记录' : '确认恢复备份', '此操作会替换当前浏览器中的全部记录和自定义库。', `<div class="backup-option"><h3>即将恢复的内容</h3><p>${dates.length} 天记录 · ${data.foods.length} 项食物 · ${data.exercises.length} 个动作</p><p>${dates.length ? `${dates[0]} 至 ${dates.at(-1)}` : '备份中没有每日记录'}</p></div><p class="small muted" style="line-height:1.9">建议先导出当前记录。替换时会自动保留当前数据作为下一次可恢复的副本。</p>`, '<button type="button" data-action="backup">返回备份</button><button type="submit" class="primary">确认替换并恢复</button>');
+  openModal(recovery ? '恢复导入前的记录' : '确认恢复备份', store.user ? '此操作会替换当前账号的云端记录和自定义库。' : '此操作会替换当前浏览器中的全部记录和自定义库。', `<div class="backup-option"><h3>即将恢复的内容</h3><p>${dates.length} 天记录 · ${data.foods.length} 项食物 · ${data.exercises.length} 个动作</p><p>${dates.length ? `${dates[0]} 至 ${dates.at(-1)}` : '备份中没有每日记录'}</p></div><p class="small muted" style="line-height:1.9">建议先导出当前记录。替换时会自动保留当前数据作为下一次可恢复的副本。</p>`, '<button type="button" data-action="backup">返回备份</button><button type="submit" class="primary">确认替换并恢复</button>');
 }
 function deleteDialog(type, id, meal) {
   modalContext = { type: 'delete', kind: type, id, meal };
@@ -194,10 +213,33 @@ function deleteDialog(type, id, meal) {
   openModal('确认删除', libraryDelete ? '只从自定义库删除，过去的饮食或锻炼记录会保留。' : `只删除 ${selectedDate} 的这一条记录。`, '<p class="small muted">删除后可通过此前导出的备份恢复。</p>', '<button type="button" data-action="close">取消</button><button class="danger" type="submit">确认删除</button>');
 }
 
-document.addEventListener('click', event => {
+document.addEventListener('click', async event => {
   const button = event.target.closest('[data-action]');
   if (!button) return;
   const { action, id, meal, value, date } = button.dataset;
+  if (saving) { toast('正在保存，请稍后操作。'); return; }
+  if (action === 'account') { accountDialog(); return; }
+  if (action === 'sync-now') {
+    await refreshCloud();
+    if (modal.open && modalContext?.type === 'account') accountDialog();
+    return;
+  }
+  if (action === 'sign-out') {
+    if (store.client) {
+      const { error } = await store.client.auth.signOut({ scope: 'local' });
+      if (error) { toast(cloudError(error)); return; }
+      await activateAccount(null); accountDialog();
+    }
+    return;
+  }
+  if (action === 'migrate') {
+    try {
+      if (!store.user || !store.ready) throw new Error('请先登录并成功同步云端记录。');
+      pendingImport = mergeHealthData(state, store.readLocal()); modalContext = { type: 'migration' };
+      openModal('将本机记录迁移到云端', '合并不会删除本机记录；重复记录跳过，冲突会取消。', '<p class="small muted">确认将当前浏览器的本地食物、动作、日期记录和营养标准合并到当前账号？</p>', '<button type="button" data-action="account">取消</button><button class="primary" type="submit">确认合并到云端</button>');
+    } catch (error) { if (modal.open) modal.querySelector('#form-error').textContent = cloudError(error); else toast(cloudError(error)); }
+    return;
+  }
   if (action === 'close') { modal.close(); return; }
   if (action === 'prev-day') switchDate(shiftDate(selectedDate, -1));
   else if (action === 'next-day') switchDate(shiftDate(selectedDate, 1));
@@ -228,12 +270,12 @@ document.addEventListener('click', event => {
   }
   else if (action.startsWith('delete-')) deleteDialog(action.slice(7), id, meal);
   else if (action === 'backup') backupDialog();
-  else if (action === 'export') { downloadData({ ...state, exportedAt: new Date().toISOString() }, `日常-health-${dateKey()}.json`); toast('备份已导出'); }
+  else if (action === 'export') { if (store.user && !store.ready) { toast('云端读取尚未成功，请先重新同步再导出。'); return; } downloadData({ ...state, exportedAt: new Date().toISOString() }, `日常-health-${dateKey()}.json`); toast('备份已导出'); }
   else if (action === 'export-raw') {
     try { downloadData(localStorage.getItem(STORAGE_KEY) || '{}', `日常-health-原始数据-${dateKey()}.json`); } catch { toast('浏览器存储不可读取。'); }
   }
   else if (action === 'recover') {
-    try { previewImport(validateBackup(JSON.parse(localStorage.getItem(RECOVERY_KEY))), true); } catch (error) { toast(error.message); }
+    try { previewImport(validateBackup(JSON.parse(localStorage.getItem(recoveryKey()))), true); } catch (error) { toast(error.message); }
   }
 });
 
@@ -257,7 +299,7 @@ document.addEventListener('change', async event => {
   else if (el.id === 'circumference') { circumference = el.value; render(); }
   else if (el.dataset.note) {
     const key = el.dataset.note;
-    changeDay(day => { if (key in MEALS) day.mealNotes[key] = el.value; else day[key] = el.value; }, '备注已保存');
+    await changeDay(day => { if (key in MEALS) day.mealNotes[key] = el.value; else day[key] = el.value; }, '备注已保存');
   }
   else if (el.id === 'import-file' && el.files[0]) {
     const file = el.files[0];
@@ -267,13 +309,13 @@ document.addEventListener('change', async event => {
     } catch (error) { modal.querySelector('#form-error').textContent = error instanceof SyntaxError ? '文件不是有效的 JSON，请选择从日常导出的备份。' : error.message; el.value = ''; }
   }
 });
-document.addEventListener('submit', event => {
+document.addEventListener('submit', async event => {
   event.preventDefault();
   const form = event.target;
   if (!form.reportValidity()) return;
   if (form.id === 'weight-form') {
     const raw = new FormData(form).get('weight'), n = raw === '' ? null : Number(raw);
-    if (changeDay(day => { day.body.weight = n; }, n == null ? '当日体重已清除' : '体重已保存')) render();
+    if (await changeDay(day => { day.body.weight = n; }, n == null ? '当日体重已清除' : '体重已保存')) render();
     return;
   }
   if (form.id !== 'modal-form' || !modalContext) return;
@@ -282,11 +324,21 @@ document.addEventListener('submit', event => {
   const str = k => String(data.get(k) || '').trim();
   let ok = false;
   try {
+    if (ctx.type === 'auth') {
+      const submit = form.querySelector('[type="submit"]'); submit.disabled = true;
+      try {
+        const { data: result, error } = await store.client.auth.signInWithPassword({ email: str('email'), password: String(data.get('password') || '') });
+        if (error) throw error;
+        form.querySelector('[name="password"]').value = '';
+        modal.close(); await activateAccount(result.user); toast('已登录共享账号');
+      } finally { submit.disabled = false; }
+      return;
+    }
     if (ctx.type === 'food') {
       if (!str('name') || !str('unit')) throw new Error('请填写食物名称和数量单位。');
       const food = { id: ctx.mode === 'entry' ? ctx.item.food.id : ctx.item?.id || uid(), name: str('name'), baseQuantity: num('baseQuantity'), unit: str('unit'), nutrients: Object.fromEntries(Object.keys(NUTRIENTS).map(k => [k, num(k)])) };
-      if (ctx.mode === 'library') ok = commit(next => { const i = next.foods.findIndex(f => f.id === food.id); if (i === -1) next.foods.push(food); else next.foods[i] = food; }, '食物库已保存');
-      else ok = commit(next => {
+      if (ctx.mode === 'library') ok = await commit(next => { const i = next.foods.findIndex(f => f.id === food.id); if (i === -1) next.foods.push(food); else next.foods[i] = food; }, '食物库已保存');
+      else ok = await commit(next => {
         next.days[selectedDate] ??= emptyDay();
         const items = next.days[selectedDate].meals[ctx.meal], entry = { id: ctx.item?.id || uid(), food, quantity: num('quantity') };
         if (ctx.mode === 'entry') items[items.findIndex(i => i.id === entry.id)] = entry; else items.push(entry);
@@ -296,8 +348,8 @@ document.addEventListener('submit', event => {
     else if (ctx.type === 'exercise') {
       if (!str('name')) throw new Error('请填写动作名称。');
       const exercise = { id: ctx.mode === 'entry' ? ctx.item.exercise.id : ctx.item?.id || uid(), name: str('name'), sets: num('sets'), reps: num('reps'), unit: str('unit') };
-      if (ctx.mode === 'library') ok = commit(next => { const i = next.exercises.findIndex(e => e.id === exercise.id); if (i === -1) next.exercises.push(exercise); else next.exercises[i] = exercise; }, '动作库已保存');
-      else ok = commit(next => {
+      if (ctx.mode === 'library') ok = await commit(next => { const i = next.exercises.findIndex(e => e.id === exercise.id); if (i === -1) next.exercises.push(exercise); else next.exercises[i] = exercise; }, '动作库已保存');
+      else ok = await commit(next => {
         next.days[selectedDate] ??= emptyDay();
         const items = next.days[selectedDate].workouts, entry = { id: ctx.item?.id || uid(), exercise, duration: num('duration'), feeling: str('feeling') };
         if (ctx.mode === 'entry') items[items.findIndex(i => i.id === entry.id)] = entry; else items.push(entry);
@@ -309,27 +361,33 @@ document.addEventListener('submit', event => {
       if (!ids.length) throw new Error('请至少选择一项。');
       const quantities = new Map([...form.querySelectorAll('[data-qty]')].map(el => [el.dataset.qty, Number(el.value)]));
       if (ctx.kind === 'food' && ids.some(id => !Number.isFinite(quantities.get(id)) || quantities.get(id) <= 0)) throw new Error('请为所选食物填写大于 0 的实际数量。');
-      ok = changeDay(day => {
+      ok = await changeDay(day => {
         if (ctx.kind === 'food') for (const id of ids) day.meals[ctx.meal].push(foodEntry(state.foods.find(f => f.id === id), quantities.get(id)));
         else for (const id of ids) day.workouts.push(workoutEntry(state.exercises.find(e => e.id === id)));
       }, `已添加 ${ids.length} 项${ctx.kind === 'food' ? '食物' : '动作'}`);
     }
-    else if (ctx.type === 'body') ok = changeDay(day => { for (const key of ctx.fields) day.body[key] = num(key); }, ctx.fields.includes('weight') ? '体重已保存' : '围度已保存');
-    else if (ctx.type === 'targets') ok = commit(next => { next.targets = Object.fromEntries(Object.keys(NUTRIENTS).map(key => [key, num(key)])); }, '每日营养标准已保存');
-    else if (ctx.type === 'delete') ok = commit(next => {
+    else if (ctx.type === 'body') ok = await changeDay(day => { for (const key of ctx.fields) day.body[key] = num(key); }, ctx.fields.includes('weight') ? '体重已保存' : '围度已保存');
+    else if (ctx.type === 'targets') ok = await commit(next => { next.targets = Object.fromEntries(Object.keys(NUTRIENTS).map(key => [key, num(key)])); }, '每日营养标准已保存');
+    else if (ctx.type === 'delete') ok = await commit(next => {
       if (ctx.kind === 'food') next.foods = next.foods.filter(f => f.id !== ctx.id);
       else if (ctx.kind === 'exercise') next.exercises = next.exercises.filter(e => e.id !== ctx.id);
       else if (ctx.kind === 'food-entry') next.days[selectedDate].meals[ctx.meal] = next.days[selectedDate].meals[ctx.meal].filter(i => i.id !== ctx.id);
       else if (ctx.kind === 'workout') next.days[selectedDate].workouts = next.days[selectedDate].workouts.filter(w => w.id !== ctx.id);
     }, '已删除');
+    else if (ctx.type === 'migration') {
+      ok = await commit(() => validateBackup(pendingImport), '本机记录已合并到云端'); if (ok) pendingImport = null;
+    }
     else if (ctx.type === 'import') {
       const normalized = validateBackup(pendingImport);
-      try {
-        const raw = localStorage.getItem(STORAGE_KEY);
-        if (raw) localStorage.setItem(RECOVERY_KEY, raw);
+      const raw = store.user ? JSON.stringify(state) : localStorage.getItem(STORAGE_KEY);
+      if (raw) localStorage.setItem(recoveryKey(), raw);
+      if (store.user) ok = await commit(() => normalized, '云端备份已恢复');
+      else {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
-        state = normalized; startupError = ''; pendingImport = null; status('已在本机保存'); toast('备份已恢复'); ok = true;
-      } catch { throw new Error('恢复失败：存储空间不足或不可用。原记录未被替换，请先导出备份。'); }
+        state = normalized; store.state = normalized; store.ready = true; startupError = ''; lastSaveError = '';
+        status('已在本机保存'); toast('备份已恢复'); ok = true;
+      }
+      if (ok) pendingImport = null;
     }
     if (ok) {
       // Remove the modal/backdrop before replacing the journal it overlays.
@@ -342,11 +400,78 @@ document.addEventListener('submit', event => {
 });
 window.addEventListener('hashchange', navigate);
 window.addEventListener('storage', event => {
-  if (event.key !== STORAGE_KEY) return;
+  if (event.key !== STORAGE_KEY || store.user || saving) return;
   try {
     state = event.newValue ? validateBackup(JSON.parse(event.newValue)) : emptyState();
-    startupError = ''; if (modal.open) modal.close(); render(); toast('记录已从另一个标签页更新');
+    store.state = state; store.ready = true; startupError = ''; if (modal.open) modal.close(); render(); toast('记录已从另一个标签页更新');
   } catch { status('另一标签页的记录无效', true); }
 });
+function renderSyncStatus() {
+  const hint = document.querySelector('.local-info p');
+  if (hint) hint.textContent = store.user ? '云端账号：' + store.user.email + '。本地记录单独保留。' : '当前为本地模式。登录同一 Reading 账号可跨设备同步。';
+  if (authInitializing) status('正在连接账号…');
+  else if (startupError) status('本机记录读取失败', true);
+  else if (store.loading) status('正在同步…');
+  else if (lastSaveError || store.error) status('同步或保存未完成', true);
+  else if (store.user && !store.ready) status('云端尚未同步', true);
+  else status(store.user ? '云端已同步' : '已在本机保存');
+}
+function accountDialog() {
+  if (!store.client) {
+    modalContext = { type: 'account' };
+    openModal('同步与账号', '沿用 Reading 的 Supabase 项目。', '<p class="small muted">' + esc(connectionError || '云连接组件尚未准备好，请刷新网页。') + '</p>', '<button type="button" data-action="close">关闭</button>');
+    return;
+  }
+  if (!store.user) {
+    modalContext = { type: 'auth' };
+    openModal('登录健康记录', '使用 Reading 的邮箱和密码，无需重新注册。', '<div class="form-grid"><label class="field span-2">邮箱<input type="email" name="email" required autocomplete="username"></label><label class="field span-2">密码<input type="password" name="password" required autocomplete="current-password"></label></div><p class="small muted" style="line-height:1.9">本地记录不会自动上传。登录后可在同步设置中主动迁移。与 Reading 同域时共享登录状态，退出也会影响该浏览器里的 Reading 登录。</p>', '<button type="button" data-action="close">取消</button><button type="submit" class="primary">登录</button>');
+  } else {
+    modalContext = { type: 'account' };
+    openModal('同步与账号', esc(store.user.email) + ' · 与 Reading 共用账号，健康数据分表保存。', '<div class="backup-options"><div class="backup-option"><h3>云端同步</h3><p>食物、动作、每日记录和营养标准统一同步。切回页面时自动读取；同时编辑发生冲突时拒绝覆盖。</p><button type="button" data-action="sync-now">重新同步</button></div><div class="backup-option"><h3>迁移当前浏览器的本地记录</h3><p>将未登录时的记录合并到云端。本地原件继续保留，不会自动覆盖已有云端内容。</p><button type="button" data-action="migrate">合并本机记录到云端</button></div><p class="small muted" style="line-height:1.9">健康数据库只需初始化一次：<a href="https://github.com/aaaa12342/health/blob/main/docs/cloud-setup.md" target="_blank" rel="noopener">查看设置说明</a>。退出共享账号后显示本机记录；不会删除云端数据。</p></div>', '<button type="button" data-action="sign-out">退出共享账号</button><button type="button" data-action="close">完成</button>');
+    if (store.error) modal.querySelector('#form-error').textContent = store.error;
+  }
+}
+async function activateAccount(user) {
+  if (user?.id === store.user?.id && store.ready) return;
+  store.useUser(user); const generation = store.generation;
+  state = emptyState(); startupError = ''; lastSaveError = ''; pendingImport = null; modalContext = null;
+  if (modal.open) modal.close();
+  const request = store.load(); render();
+  try { if (await request) state = store.state; }
+  catch (error) { if (!user && generation === store.generation) startupError = '本机记录读取失败，原始数据已保留，请从备份恢复。'; }
+  if (generation === store.generation) render();
+}
+async function refreshCloud(quiet = false) {
+  if (!store.user || saving || store.loading || authInitializing) return;
+  const generation = store.generation, request = store.load(); renderSyncStatus();
+  try { if (await request) { state = store.state; lastSaveError = ''; if (!quiet) toast('云端记录已同步'); } }
+  catch (error) { if (generation === store.generation && !quiet) toast(cloudError(error)); }
+  if (generation === store.generation) render();
+}
+async function initializeCloud() {
+  try {
+    const config = publicConfig(window.HEALTH_CONFIG);
+    if (!window.supabase) throw new Error('登录组件未加载，请刷新网页。');
+    store.client = window.supabase.createClient(config.url, config.key, { global: { fetch: (input, init = {}) => {
+      const timeout = AbortSignal.timeout(15000);
+      return fetch(input, { ...init, signal: init.signal && AbortSignal.any ? AbortSignal.any([init.signal, timeout]) : timeout });
+    } } });
+    const { data, error } = await store.client.auth.getSession();
+    if (error) throw error;
+    authInitializing = false; await activateAccount(data.session?.user || null); render();
+    store.client.auth.onAuthStateChange((_event, session) => {
+      if (session?.user?.id === store.user?.id) return;
+      setTimeout(() => activateAccount(session?.user || null), 0);
+    });
+  } catch (error) { connectionError = cloudError(error); authInitializing = false; render(); }
+}
+function refreshWhenIdle() {
+  if (document.visibilityState !== 'visible' || modal.open || document.activeElement?.matches('input,textarea,select')) return;
+  refreshCloud(true);
+}
+window.addEventListener('focus', refreshWhenIdle);
+document.addEventListener('visibilitychange', refreshWhenIdle);
+setInterval(refreshWhenIdle, 60000);
 document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); });
 navigate();
+initializeCloud();

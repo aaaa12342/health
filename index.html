@@ -4,10 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#234c3b">
-  <meta name="description" content="记录每天的饮食、锻炼与身体变化。个人健康日志，数据保存在你的浏览器。">
+  <meta name="description" content="记录每天的饮食、锻炼与身体变化。个人健康日志，支持本地保存与账号云同步。">
   <title>日常 · 饮食与锻炼记录</title>
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="./styles.css?v=20261019-4">
+  <link rel="stylesheet" href="./styles.css?v=20261020-cloud1">
 </head>
 <body>
   <a class="skip-link" href="#main">跳到主要内容</a>
@@ -20,16 +20,18 @@
     </nav>
     <div class="sidebar-bottom">
       <div class="local-info"><span data-icon="shield"></span><strong>属于你的生活记录</strong><p>数据只保存在当前浏览器。<br>定期备份，让每一天都有迹可循。</p></div>
-      <button class="text-button" data-action="backup"><span data-icon="download"></span>备份与恢复</button>
+      <button class="text-button" data-action="backup"><span data-icon="download"></span>同步与备份</button>
     </div>
   </aside>
   <div class="workspace">
-    <header class="topbar"><span class="breadcrumb">我的健康记录 <span>/</span> <b id="page-label">总览</b></span><div class="save-status" id="save-status" role="status"><i></i>已在本机保存</div><button class="mobile-backup icon-button" data-action="backup" aria-label="备份与恢复"><span data-icon="download"></span></button></header>
+    <header class="topbar"><span class="breadcrumb">我的健康记录 <span>/</span> <b id="page-label">总览</b></span><button class="sync-account-button" data-action="account">同步与账号</button><div class="save-status" id="save-status" role="status"><i></i>已在本机保存</div><button class="mobile-backup icon-button" data-action="backup" aria-label="同步与备份"><span data-icon="download"></span></button></header>
     <main id="main" tabindex="-1"></main>
   </div>
   <dialog id="modal" aria-labelledby="modal-title"></dialog>
   <div id="toast" role="status" aria-live="polite"></div>
   <noscript>请启用 JavaScript 以使用饮食和锻炼记录。</noscript>
-  <script type="module" src="./app.js?v=20261020-1"></script>
+  <script src="./config.js?v=20261020-cloud1"></script>
+  <script src="./vendor/supabase.js"></script>
+  <script type="module" src="./app.js?v=20261020-cloud1"></script>
 </body>
 </html>
