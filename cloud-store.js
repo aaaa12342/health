@@ -1,4 +1,4 @@
-import { emptyState, emptyDay, validateBackup, STORAGE_KEY, MEALS, BODY } from './domain.js?v=20261113-food';
+import { normalizeFoodCategory, emptyState, emptyDay, validateBackup, STORAGE_KEY, MEALS, BODY } from './domain.js?v=20261113-categories';
 
 export function publicConfig(config) {
   const url = new URL(config?.supabaseUrl || '');
@@ -16,10 +16,11 @@ export function cloudError(error) {
   return error?.message || '云端操作失败，请重新同步后再试';
 }
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-function mergeItems(left, right, label) {
+function mergeItems(left, right, label, merge = null) {
   const result = structuredClone(left), index = new Map(result.map(v => [v.id, v]));
   for (const item of right) {
     if (!index.has(item.id)) { const copy = structuredClone(item); result.push(copy); index.set(item.id, copy); }
+    else if (merge && merge(index.get(item.id), item)) continue;
     else if (!same(index.get(item.id), item)) throw new Error(label + '存在同一标识的不同内容，已取消迁移；请先导出备份处理冲突。');
   }
   return result;
@@ -32,7 +33,12 @@ function combineValue(oldValue, value, label) {
 }
 export function mergeHealthData(current, incoming) {
   const result = validateBackup(current), local = validateBackup(incoming);
-  result.foods = mergeItems(result.foods, local.foods, '食物库');
+  result.foods = mergeItems(result.foods, local.foods, '食物库', (existing, incoming) => {
+    if (existing.name !== incoming.name || existing.unit !== incoming.unit) return false;
+    const category = normalizeFoodCategory(incoming.category);
+    if (existing.category === '未分类') existing.category = category;
+    return category === '未分类' || existing.category === category;
+  });
   result.exercises = mergeItems(result.exercises, local.exercises, '动作库');
   for (const [date, source] of Object.entries(local.days)) {
     const day = result.days[date] ||= emptyDay();

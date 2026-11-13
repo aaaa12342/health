@@ -113,3 +113,12 @@ test('公开连接只接收 Supabase URL 与 publishable/anon key', () => {
   ]) assert.throws(() => publicConfig(config));
   assert.match(cloudError({ message: 'HEALTH_CONFLICT' }), /另一台设备/);
 });
+
+test('迁移旧食物时保留已有分类，同一食物的不同分类不覆盖', () => {
+  const legacy = { ...emptyState(), foods: [food()] };
+  const produce = { ...emptyState(), foods: [{ ...food(), category: '蔬菜' }] };
+  const staple = { ...emptyState(), foods: [{ ...food(), category: '主食' }] };
+  assert.equal(mergeHealthData(produce, legacy).foods[0].category, '蔬菜');
+  assert.equal(mergeHealthData(legacy, staple).foods[0].category, '主食');
+  assert.throws(() => mergeHealthData(produce, staple), /已取消迁移/);
+});

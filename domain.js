@@ -1,5 +1,7 @@
 export const STORAGE_KEY = 'daily-health:v1';
 export const RECOVERY_KEY = 'daily-health:before-import';
+export const FOOD_CATEGORIES = ['蔬菜', '肉类', '鱼虾', '水果', '主食', '未分类'];
+export const normalizeFoodCategory = value => FOOD_CATEGORIES.includes(value) ? value : '未分类';
 export const EXERCISE_UNITS = ['个', '秒', '分钟'];
 export const MEALS = { breakfast: '早餐', lunch: '午餐', dinner: '晚餐', snack: '加餐' };
 export const BODY = { weight: ['体重', 'kg'], waist: ['腰围', 'cm'], hip: ['臀围', 'cm'], chest: ['胸围', 'cm'], thigh: ['大腿围', 'cm'], arm: ['上臂围', 'cm'] };
@@ -20,7 +22,7 @@ export function shiftDate(key, offset) {
   return dateKey(d);
 }
 export function dayOf(state, key) { return state.days[key] || emptyDay(); }
-export function foodEntry(food, quantity = 1) { return { id: uid(), food: structuredClone(food), quantity }; }
+export function foodEntry(food, quantity = 1) { return { id: uid(), food: { id: food.id, name: food.name, unit: food.unit }, quantity }; }
 export function workoutEntry(exercise) { return { id: uid(), exercise: structuredClone(exercise), duration: null, feeling: '' }; }
 export function series(state, end, count, field) {
   return Array.from({ length: count }, (_, i) => {
@@ -59,7 +61,7 @@ export function validateBackup(input) {
   };
   if (!obj(input) || input.version !== 1 || !obj(input.days)) fail('版本或日期记录');
   const state = emptyState();
-  state.foods = unique(array(input.foods, 5000, '食物库').map(food), '食物库');
+  state.foods = unique(array(input.foods, 5000, '食物库').map(item => ({ ...food(item), category: normalizeFoodCategory(item.category) })), '食物库');
   state.exercises = unique(array(input.exercises, 5000, '动作库').map(exercise), '动作库');
   if (Object.keys(input.days).length > 30000) fail('日期数量过多');
   for (const [date, raw] of Object.entries(input.days)) {

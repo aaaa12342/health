@@ -70,7 +70,7 @@ test('旧版备份保留食物单位、食用数量和身体数据，忽略已�
   old.days['2026-10-19'].meals.breakfast.push(foodEntry(legacyFood, 150));
   old.days['2026-10-19'].body.weight = 65;
   const result = validateBackup(old);
-  assert.deepEqual(result.foods, [food()]);
+  assert.deepEqual(result.foods, [{ ...food(), category: '未分类' }]);
   assert.deepEqual(result.days['2026-10-19'].meals.breakfast[0].food, food());
   assert.equal(result.days['2026-10-19'].meals.breakfast[0].quantity, 150);
   assert.equal(result.days['2026-10-19'].body.weight, 65);
