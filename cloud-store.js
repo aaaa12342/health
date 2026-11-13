@@ -1,4 +1,4 @@
-import { emptyState, emptyDay, validateBackup, STORAGE_KEY, NUTRIENTS, MEALS, BODY } from './domain.js?v=20261020-cloud1';
+import { emptyState, emptyDay, validateBackup, STORAGE_KEY, MEALS, BODY } from './domain.js?v=20261113-food';
 
 export function publicConfig(config) {
   const url = new URL(config?.supabaseUrl || '');
@@ -34,7 +34,6 @@ export function mergeHealthData(current, incoming) {
   const result = validateBackup(current), local = validateBackup(incoming);
   result.foods = mergeItems(result.foods, local.foods, '食物库');
   result.exercises = mergeItems(result.exercises, local.exercises, '动作库');
-  for (const key of Object.keys(NUTRIENTS)) result.targets[key] = combineValue(result.targets[key], local.targets[key], '营养标准');
   for (const [date, source] of Object.entries(local.days)) {
     const day = result.days[date] ||= emptyDay();
     for (const key of Object.keys(MEALS)) {
@@ -85,7 +84,8 @@ export class HealthStore {
     this.writing = true;
     try {
       if (user) {
-        const { data, error } = await this.client.rpc('save_health_journal', { p_payload: state, p_expected_revision: this.revision, p_expected_user: user.id });
+        // The deployed v1 SQL requires this empty legacy key on the wire.
+        const { data, error } = await this.client.rpc('save_health_journal', { p_payload: { ...state, targets: {} }, p_expected_revision: this.revision, p_expected_user: user.id });
         if (error) throw error;
         if (generation !== this.generation) throw new Error('账号已切换，未将旧请求显示到当前账号');
         const row = Array.isArray(data) ? data[0] : data;

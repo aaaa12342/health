@@ -1,40 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { emptyState, emptyDay, foodEntry, workoutEntry, scaleNutrients, totals, nutrientComparison, validDate, dateKey, shiftDate, series, validateBackup, hasRecord } from '../domain.js';
+import { emptyState, emptyDay, foodEntry, workoutEntry, validDate, dateKey, shiftDate, series, validateBackup, hasRecord } from '../domain.js';
 
-const food = () => ({ id: 'food-1', name: '测试燕麦', baseQuantity: 100, unit: '克', nutrients: { energy: 1600, protein: 12, fat: 8, carbs: 60, fiber: null, sodium: 0 } });
+const food = () => ({ id: 'food-1', name: '测试燕麦', unit: '克' });
 const exercise = () => ({ id: 'exercise-1', name: '深蹲', sets: 3, reps: 12, unit: '个' });
-test('营养标准比较处理未设置、低于、超过及零标准', () => {
-  assert.equal(nutrientComparison(100, null), null);
-  assert.deepEqual(nutrientComparison(1600, 8000), { difference: -6400, percentage: 20 });
-  assert.deepEqual(nutrientComparison(120, 100), { difference: 20, percentage: 120 });
-  assert.deepEqual(nutrientComparison(100, 100), { difference: 0, percentage: 100 });
-  assert.deepEqual(nutrientComparison(10, 0), { difference: 10, percentage: null });
-  assert.deepEqual(nutrientComparison(0, 0), { difference: 0, percentage: null });
-});
-test('标准随备份往返；旧备份无标准时仍兼容；负数和非数值被拒绝', () => {
-  const state = emptyState(); state.targets = { energy: 8000, protein: 100, sodium: 0 };
-  const restored = validateBackup(JSON.parse(JSON.stringify(state)));
-  assert.equal(restored.targets.energy, 8000); assert.equal(restored.targets.sodium, 0); assert.equal(restored.targets.fat, null);
-  delete state.targets; assert.equal(validateBackup(state).targets.protein, null);
-  state.targets = { energy: -1 }; assert.throws(() => validateBackup(state));
-  state.targets = { energy: '8000' }; assert.throws(() => validateBackup(state));
-  state.targets = []; assert.throws(() => validateBackup(state));
-});
-test('按基准份量折算营养，保留未知和明确零', () => {
-  assert.deepEqual(scaleNutrients(food(), 150), { energy: 2400, protein: 18, fat: 12, carbs: 90, fiber: null, sodium: 0 });
-});
-test('总览跨餐合计，未知数据单独计数', () => {
-  const day = emptyDay(), unknown = food(); unknown.nutrients.protein = null;
-  day.meals.breakfast.push(foodEntry(food(), 50)); day.meals.dinner.push(foodEntry(unknown, 200));
-  assert.deepEqual(totals(day).energy, { value: 4000, missing: 0, count: 2 });
-  assert.deepEqual(totals(day).protein, { value: 6, missing: 1, count: 2 });
-  assert.deepEqual(totals(emptyDay()).energy, { value: 0, missing: 0, count: 0 });
-});
 test('记录保存快照，修改模板不会改动历史', () => {
   const f = food(), e = exercise(), meal = foodEntry(f, 150), workout = workoutEntry(e);
-  f.nutrients.energy = 1; f.name = '新名称'; e.sets = 99;
-  assert.equal(meal.food.name, '测试燕麦'); assert.equal(meal.food.nutrients.energy, 1600);
+  f.unit = '份'; f.name = '新名称'; e.sets = 99;
+  assert.equal(meal.food.name, '测试燕麦'); assert.equal(meal.food.unit, '克');
   assert.equal(workout.exercise.sets, 3);
 });
 test('日期严格校验，支持闰年和跨月跨年', () => {
@@ -56,17 +29,17 @@ test('全量备份往返，未知字段不会被载入', () => {
   state.days['2026-10-19'] = day;
   const restored = validateBackup(JSON.parse(JSON.stringify({ ...state, unexpected: 'ignored' })));
   assert.equal(restored.days['2026-10-19'].body.weight, 60); assert.equal(restored.days['2026-10-19'].body.arm, null);
-  assert.equal(restored.unexpected, undefined); assert.equal(totals(restored.days['2026-10-19']).energy.value, 2400);
+  assert.equal(restored.unexpected, undefined); assert.equal(restored.days['2026-10-19'].meals.breakfast[0].quantity, 150);
 });
 test('恶意或损坏备份不通过校验', () => {
   assert.throws(() => validateBackup({ version: 2 }));
-  const badNumber = emptyState(); const f = food(); f.baseQuantity = 0; badNumber.foods.push(f); assert.throws(() => validateBackup(badNumber));
+  const badNumber = emptyState(); const f = food(); badNumber.days['2026-10-19'] = emptyDay(); badNumber.days['2026-10-19'].meals.lunch.push(foodEntry(f, 0)); assert.throws(() => validateBackup(badNumber));
   const badDate = emptyState(); badDate.days['2026-02-30'] = emptyDay(); assert.throws(() => validateBackup(badDate));
   const duplicate = emptyState(); duplicate.foods.push(food(), food()); assert.throws(() => validateBackup(duplicate));
   const badBody = emptyState(); badBody.days['2026-10-19'] = emptyDay(); badBody.days['2026-10-19'].body.weight = -1; assert.throws(() => validateBackup(badBody));
   const badSet = emptyState(); badSet.exercises.push({ ...exercise(), sets: 1.5 }); assert.throws(() => validateBackup(badSet));
   const proto = JSON.parse('{"version":1,"foods":[],"exercises":[],"days":{"__proto__":{}}}'); assert.throws(() => validateBackup(proto));
-  const infinity = emptyState(); infinity.foods.push({ ...food(), baseQuantity: Infinity }); assert.throws(() => validateBackup(infinity));
+  const infinity = emptyState(); infinity.days['2026-10-19'] = emptyDay(); infinity.days['2026-10-19'].meals.lunch.push(foodEntry(food(), Infinity)); assert.throws(() => validateBackup(infinity));
 });
 test('空日不标记记录，备注、体重、动作、围度均会标记', () => {
   assert.equal(Boolean(hasRecord(emptyDay())), false);
@@ -87,4 +60,19 @@ test('分钟动作在动作库和每日训练备份中往返保留，旧单位�
     assert.equal(result.exercises[0].unit, unit);
     assert.equal(result.days['2026-10-20'].workouts[0].exercise.unit, unit);
   }
+});
+
+test('旧版备份保留食物单位、食用数量和身体数据，忽略已移除字段', () => {
+  const old = emptyState(), legacyFood = { ...food(), baseQuantity: 100, nutrients: { protein: 12 } };
+  old.targets = { protein: 80 };
+  old.foods.push(legacyFood);
+  old.days['2026-10-19'] = emptyDay();
+  old.days['2026-10-19'].meals.breakfast.push(foodEntry(legacyFood, 150));
+  old.days['2026-10-19'].body.weight = 65;
+  const result = validateBackup(old);
+  assert.deepEqual(result.foods, [food()]);
+  assert.deepEqual(result.days['2026-10-19'].meals.breakfast[0].food, food());
+  assert.equal(result.days['2026-10-19'].meals.breakfast[0].quantity, 150);
+  assert.equal(result.days['2026-10-19'].body.weight, 65);
+  assert.ok(!Object.hasOwn(result, 'targets'));
 });

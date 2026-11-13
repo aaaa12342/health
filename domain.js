@@ -1,10 +1,9 @@
 export const STORAGE_KEY = 'daily-health:v1';
 export const RECOVERY_KEY = 'daily-health:before-import';
-export const NUTRIENTS = { energy: ['能量', 'kJ'], protein: ['蛋白质', 'g'], fat: ['脂肪', 'g'], carbs: ['碳水化合物', 'g'], fiber: ['膳食纤维', 'g'], sodium: ['钠', 'mg'] };
 export const EXERCISE_UNITS = ['个', '秒', '分钟'];
 export const MEALS = { breakfast: '早餐', lunch: '午餐', dinner: '晚餐', snack: '加餐' };
 export const BODY = { weight: ['体重', 'kg'], waist: ['腰围', 'cm'], hip: ['臀围', 'cm'], chest: ['胸围', 'cm'], thigh: ['大腿围', 'cm'], arm: ['上臂围', 'cm'] };
-export const emptyState = () => ({ version: 1, foods: [], exercises: [], days: {}, targets: {} });
+export const emptyState = () => ({ version: 1, foods: [], exercises: [], days: {} });
 export const emptyDay = () => ({ meals: { breakfast: [], lunch: [], dinner: [], snack: [] }, mealNotes: { breakfast: '', lunch: '', dinner: '', snack: '' }, dietNote: '', workouts: [], workoutNote: '', body: {} });
 export const uid = () => globalThis.crypto.randomUUID();
 export function dateKey(date = new Date()) {
@@ -21,25 +20,7 @@ export function shiftDate(key, offset) {
   return dateKey(d);
 }
 export function dayOf(state, key) { return state.days[key] || emptyDay(); }
-export function scaleNutrients(food, quantity) {
-  return Object.fromEntries(Object.keys(NUTRIENTS).map(k => [k, food.nutrients[k] == null ? null : food.nutrients[k] * quantity / food.baseQuantity]));
-}
-export function totals(day) {
-  const items = Object.values(day.meals).flat();
-  return Object.fromEntries(Object.keys(NUTRIENTS).map(k => {
-    let value = 0, missing = 0;
-    for (const item of items) {
-      const n = scaleNutrients(item.food, item.quantity)[k];
-      if (n == null) missing++; else value += n;
-    }
-    return [k, { value, missing, count: items.length }];
-  }));
-}
-export function nutrientComparison(actual, target) {
-  if (target == null) return null;
-  return { difference: actual - target, percentage: target > 0 ? actual / target * 100 : null };
-}
-export function foodEntry(food, quantity = food.baseQuantity) { return { id: uid(), food: structuredClone(food), quantity }; }
+export function foodEntry(food, quantity = 1) { return { id: uid(), food: structuredClone(food), quantity }; }
 export function workoutEntry(exercise) { return { id: uid(), exercise: structuredClone(exercise), duration: null, feeling: '' }; }
 export function series(state, end, count, field) {
   return Array.from({ length: count }, (_, i) => {
@@ -68,8 +49,8 @@ export function validateBackup(input) {
   const id = v => string(v, 100, '条目标识', true);
   const unique = (items, name) => { if (new Set(items.map(x => x.id)).size !== items.length) fail(`${name}标识重复`); return items; };
   const food = v => {
-    if (!obj(v) || !obj(v.nutrients)) fail('食物');
-    return { id: id(v.id), name: string(v.name, 100, '食物名称', true), baseQuantity: number(v.baseQuantity, '食物基准数量', true), unit: string(v.unit, 20, '食物单位', true), nutrients: Object.fromEntries(Object.keys(NUTRIENTS).map(k => [k, number(v.nutrients[k], NUTRIENTS[k][0], false, true)])) };
+    if (!obj(v)) fail('食物');
+    return { id: id(v.id), name: string(v.name, 100, '食物名称', true), unit: string(v.unit, 20, '食物单位', true) };
   };
   const exercise = v => {
     if (!obj(v)) fail('动作');
@@ -78,9 +59,6 @@ export function validateBackup(input) {
   };
   if (!obj(input) || input.version !== 1 || !obj(input.days)) fail('版本或日期记录');
   const state = emptyState();
-  // Older version-1 backups did not contain standards. Keep those usable.
-  if (input.targets != null && !obj(input.targets)) fail('每日营养标准');
-  for (const key of Object.keys(NUTRIENTS)) state.targets[key] = number(input.targets?.[key], '每日' + NUTRIENTS[key][0] + '标准', false, true);
   state.foods = unique(array(input.foods, 5000, '食物库').map(food), '食物库');
   state.exercises = unique(array(input.exercises, 5000, '动作库').map(exercise), '动作库');
   if (Object.keys(input.days).length > 30000) fail('日期数量过多');
