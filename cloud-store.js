@@ -1,4 +1,4 @@
-import { normalizeFoodCategory, emptyState, emptyDay, validateBackup, STORAGE_KEY, MEALS, BODY } from './domain.js?v=20261113-categories';
+import { emptyState, emptyDay, validateBackup, STORAGE_KEY, MEALS, BODY } from './domain.js?v=20261113-exercise-categories';
 
 export function publicConfig(config) {
   const url = new URL(config?.supabaseUrl || '');
@@ -31,15 +31,17 @@ function combineValue(oldValue, value, label) {
   if (oldValue !== value) throw new Error(label + '与云端已有值不同，已取消迁移，未覆盖云端。');
   return oldValue;
 }
+function mergeLibraryCategory(existing, incoming) {
+  const { category: oldCategory, ...oldFields } = existing;
+  const { category, ...newFields } = incoming;
+  if (!same(oldFields, newFields)) return false;
+  if (oldCategory === '未分类') existing.category = category;
+  return category === '未分类' || existing.category === category;
+}
 export function mergeHealthData(current, incoming) {
   const result = validateBackup(current), local = validateBackup(incoming);
-  result.foods = mergeItems(result.foods, local.foods, '食物库', (existing, incoming) => {
-    if (existing.name !== incoming.name || existing.unit !== incoming.unit) return false;
-    const category = normalizeFoodCategory(incoming.category);
-    if (existing.category === '未分类') existing.category = category;
-    return category === '未分类' || existing.category === category;
-  });
-  result.exercises = mergeItems(result.exercises, local.exercises, '动作库');
+  result.foods = mergeItems(result.foods, local.foods, '食物库', mergeLibraryCategory);
+  result.exercises = mergeItems(result.exercises, local.exercises, '动作库', mergeLibraryCategory);
   for (const [date, source] of Object.entries(local.days)) {
     const day = result.days[date] ||= emptyDay();
     for (const key of Object.keys(MEALS)) {

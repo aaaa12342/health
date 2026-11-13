@@ -122,3 +122,14 @@ test('迁移旧食物时保留已有分类，同一食物的不同分类不覆�
   assert.equal(mergeHealthData(legacy, staple).foods[0].category, '主食');
   assert.throws(() => mergeHealthData(produce, staple), /已取消迁移/);
 });
+
+test('旧动作默认未分类，迁移不覆盖已有分类且历史快照不受影响', () => {
+  const action = { id: 'x', name: '慢跑', sets: 1, reps: 10, unit: '分钟' };
+  const legacy = { ...emptyState(), exercises: [action] };
+  const cardio = { ...emptyState(), exercises: [{ ...action, category: '有氧' }] };
+  const upper = { ...emptyState(), exercises: [{ ...action, category: '上肢' }] };
+  assert.equal(mergeHealthData(emptyState(), legacy).exercises[0].category, '未分类');
+  assert.equal(mergeHealthData(cardio, legacy).exercises[0].category, '有氧');
+  assert.equal(mergeHealthData(legacy, cardio).exercises[0].category, '有氧');
+  assert.throws(() => mergeHealthData(cardio, upper), /已取消迁移/);
+});

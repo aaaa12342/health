@@ -12,4 +12,4 @@ svg{width:20px;height:20px;flex-shrink:0}.chart-wrap svg{width:100%;height:auto}
 
 .sync-account-button{font-size:12px;min-height:36px;margin-left:auto;margin-right:16px;padding:7px 12px}.form-error a{text-decoration:underline}.backup-option a{text-decoration:underline}@media(max-width:740px){.sync-account-button{margin-right:8px;padding:6px 8px;font-size:11px}.topbar .save-status{margin-left:0}.topbar{gap:4px;padding-left:14px;padding-right:14px}.breadcrumb{font-size:11px}.breadcrumb span{margin:0 5px}}
 
-#food-library-category{margin:4px 0 8px}#picker-category{margin-top:8px}
+#food-library-category,#exercise-library-category{margin:4px 0 8px}#picker-category{margin-top:8px}
